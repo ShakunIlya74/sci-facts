@@ -1,0 +1,5 @@
+# vllm - requires Linux with CUDA; install separately on GPU server
+requests
+langchain
+langchain-openai
+langchain-core
