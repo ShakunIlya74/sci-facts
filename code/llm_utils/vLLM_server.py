@@ -52,15 +52,15 @@ def start_vllm_server(
 def wait_for_vllm(
     base_url: str,
     api_key: str,
-    timeout: float = 60.0,
+    timeout: float = 360.0,
     interval: float = 1.0,
 ) -> None:
     """
     Poll the vLLM OpenAI-compatible server until it's ready or timeout.
 
-    Uses the /models endpoint to check readiness.
+    Uses the /v1/models endpoint to check readiness.
     """
-    url = base_url.rstrip("/") + "/models"
+    url = base_url.rstrip("/") + "/v1/models"
     headers = {"Authorization": f"Bearer {api_key}"}
 
     start = time.time()
