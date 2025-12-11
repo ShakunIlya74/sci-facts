@@ -8,7 +8,8 @@ from langchain_openai import ChatOpenAI
 
 
 def start_vllm_server(
-    model: str = "Qwen/Qwen3-4B-Instruct",
+    # model: str = "Qwen/Qwen2.5-3B-Instruct",
+    model: str = "Qwen/Qwen3-VL-4B-Instruct",
     host: str = "0.0.0.0",
     port: int = 8000,
     api_key: str = "token-abc123",
@@ -81,7 +82,8 @@ def wait_for_vllm(
 
 
 def get_local_qwen_llm(
-    model: str = "Qwen/Qwen3-4B-Instruct",
+    # model: str = "Qwen/Qwen2.5-3B-Instruct",
+    model: str = "Qwen/Qwen3-VL-4B-Instruct",
     host: str = "127.0.0.1",
     port: int = 8000,
     api_key: str = "token-abc123",
@@ -107,7 +109,8 @@ def get_local_qwen_llm(
 
 @contextmanager
 def local_qwen_llm(
-    model: str = "Qwen/Qwen3-4B-Instruct",
+    # model: str = "Qwen/Qwen2.5-3B-Instruct",
+    model: str = "Qwen/Qwen3-VL-4B-Instruct",
     host: str = "127.0.0.1",
     port: int = 8000,
     api_key: str = "token-abc123",
