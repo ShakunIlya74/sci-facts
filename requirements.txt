@@ -3,3 +3,11 @@ requests
 langchain
 langchain-openai
 langchain-core
+
+# MCP Client dependencies
+httpx>=0.25.0
+mcp>=1.0.0
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
