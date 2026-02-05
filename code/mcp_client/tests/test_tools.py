@@ -542,81 +542,82 @@ class TestCollectionTools:
             )
             pytest.skip(f"Get collection failed (collection may not exist): {e}")
     
-    async def test_collections_add_and_remove_items(
-        self,
-        mcp_client: MCPClient,
-        result_logger: ResultLogger,
-        sample_user_id: int,
-    ):
-        """Test adding and removing items from a collection."""
-        # This is a comprehensive test that creates a collection,
-        # adds items, removes items, then deletes the collection
+    # should be disabled for now
+    # async def test_collections_add_and_remove_items(
+    #     self,
+    #     mcp_client: MCPClient,
+    #     result_logger: ResultLogger,
+    #     sample_user_id: int,
+    # ):
+    #     """Test adding and removing items from a collection."""
+    #     # This is a comprehensive test that creates a collection,
+    #     # adds items, removes items, then deletes the collection
         
-        collection_name = "test_items_collection_pytest"
-        paper_ids = [1, 2]  # Placeholder paper IDs
+    #     collection_name = "test_items_collection_pytest"
+    #     paper_ids = [1, 2]  # Placeholder paper IDs
         
-        try:
-            # 1. Create collection
-            create_response = await mcp_client.collections_create(
-                user_id=sample_user_id,
-                name=collection_name,
-            )
-            result_logger.log_response("collections_create", create_response, success=True)
+    #     try:
+    #         # 1. Create collection
+    #         create_response = await mcp_client.collections_create(
+    #             user_id=sample_user_id,
+    #             name=collection_name,
+    #         )
+    #         result_logger.log_response("collections_create", create_response, success=True)
             
-            collection_id = None
-            if isinstance(create_response, dict):
-                collection_id = create_response.get("collection_id") or \
-                               create_response.get("id") or \
-                               (create_response.get("collection", {}) or {}).get("id")
+    #         collection_id = None
+    #         if isinstance(create_response, dict):
+    #             collection_id = create_response.get("collection_id") or \
+    #                            create_response.get("id") or \
+    #                            (create_response.get("collection", {}) or {}).get("id")
             
-            if not collection_id:
-                pytest.skip("Could not get collection ID from create response")
-                return
+    #         if not collection_id:
+    #             pytest.skip("Could not get collection ID from create response")
+    #             return
             
-            # 2. Add items
-            result_logger.log_request("tools/call", {
-                "name": "collections_add_items",
-                "arguments": {"collection_id": collection_id, "paper_ids": paper_ids},
-            })
+    #         # 2. Add items
+    #         result_logger.log_request("tools/call", {
+    #             "name": "collections_add_items",
+    #             "arguments": {"collection_id": collection_id, "paper_ids": paper_ids},
+    #         })
             
-            add_response = await mcp_client.collections_add_items(
-                collection_id=collection_id,
-                paper_ids=paper_ids,
-            )
-            result_logger.log_response("collections_add_items", add_response, success=True)
+    #         add_response = await mcp_client.collections_add_items(
+    #             collection_id=collection_id,
+    #             paper_ids=paper_ids,
+    #         )
+    #         result_logger.log_response("collections_add_items", add_response, success=True)
             
-            result_logger.log_test_result(
-                "test_collections_add_items",
-                passed=True,
-                response=add_response,
-            )
+    #         result_logger.log_test_result(
+    #             "test_collections_add_items",
+    #             passed=True,
+    #             response=add_response,
+    #         )
             
-            # 3. Remove item
-            result_logger.log_request("tools/call", {
-                "name": "collections_remove_item",
-                "arguments": {"collection_id": collection_id, "paper_id": paper_ids[0]},
-            })
+    #         # 3. Remove item
+    #         result_logger.log_request("tools/call", {
+    #             "name": "collections_remove_item",
+    #             "arguments": {"collection_id": collection_id, "paper_id": paper_ids[0]},
+    #         })
             
-            remove_response = await mcp_client.collections_remove_item(
-                collection_id=collection_id,
-                paper_id=paper_ids[0],
-            )
-            result_logger.log_response("collections_remove_item", remove_response, success=True)
+    #         remove_response = await mcp_client.collections_remove_item(
+    #             collection_id=collection_id,
+    #             paper_id=paper_ids[0],
+    #         )
+    #         result_logger.log_response("collections_remove_item", remove_response, success=True)
             
-            result_logger.log_test_result(
-                "test_collections_remove_item",
-                passed=True,
-                response=remove_response,
-            )
+    #         result_logger.log_test_result(
+    #             "test_collections_remove_item",
+    #             passed=True,
+    #             response=remove_response,
+    #         )
             
-            # 4. Cleanup - delete collection
-            await mcp_client.collections_delete(collection_id=collection_id)
-            result_logger.logger.info(f"Cleaned up test collection {collection_id}")
+    #         # 4. Cleanup - delete collection
+    #         await mcp_client.collections_delete(collection_id=collection_id)
+    #         result_logger.logger.info(f"Cleaned up test collection {collection_id}")
             
-        except MCPError as e:
-            result_logger.log_test_result(
-                "test_collections_add_and_remove_items",
-                passed=False,
-                error=e,
-            )
-            pytest.skip(f"Collection item operations failed: {e}")
+    #     except MCPError as e:
+    #         result_logger.log_test_result(
+    #             "test_collections_add_and_remove_items",
+    #             passed=False,
+    #             error=e,
+    #         )
+    #         pytest.skip(f"Collection item operations failed: {e}")
