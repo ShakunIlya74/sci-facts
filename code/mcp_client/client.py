@@ -7,6 +7,7 @@ Provides async methods for calling tools, reading resources, and getting prompts
 import json
 import logging
 from typing import Any, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -15,9 +16,40 @@ from .config import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 
+def _normalize_prompt_arguments(args: dict) -> dict:
+    """
+    Normalize prompt arguments to have string values only.
+
+    MCP protocol requires all prompt argument values to be strings.
+    This function converts:
+    - Lists/arrays to JSON strings
+    - Integers/floats to strings
+    - None values are omitted
+
+    Args:
+        args: Dictionary of arguments with any value types
+
+    Returns:
+        Dictionary with all values converted to strings
+    """
+    normalized = {}
+    for key, value in args.items():
+        if value is None:
+            continue
+        elif isinstance(value, str):
+            normalized[key] = value
+        elif isinstance(value, (list, dict)):
+            # Convert complex types to JSON strings
+            normalized[key] = json.dumps(value)
+        else:
+            # Convert numbers and other types to strings
+            normalized[key] = str(value)
+    return normalized
+
+
 class MCPError(Exception):
     """Base exception for MCP client errors."""
-    
+
     def __init__(self, message: str, code: Optional[int] = None, data: Any = None):
         super().__init__(message)
         self.code = code
@@ -373,14 +405,14 @@ class MCPClient:
     
     async def read_topic(self, topic_name: str) -> dict:
         """Read topic resource."""
-        return await self.read_resource(f"topic://{topic_name}")
+        return await self.read_resource(f"topic://{quote(topic_name)}")
     
     # === Prompt Methods ===
     
     async def get_prompt(self, name: str, arguments: Optional[dict] = None) -> dict:
         """
         Get a prompt template with arguments.
-        
+
         Available prompts:
         - litreview_plan
         - litreview_screening_criteria
@@ -408,13 +440,17 @@ class MCPClient:
     async def get_litreview_screening_criteria(
         self,
         topic: str,
-        inclusion_rules: Optional[str] = None,
+        inclusion_rules: str,
         exclusion_rules: Optional[str] = None,
     ) -> dict:
-        """Get literature review screening criteria prompt."""
-        args = {"topic": topic}
-        if inclusion_rules:
-            args["inclusion_rules"] = inclusion_rules
+        """Get literature review screening criteria prompt.
+
+        Args:
+            topic: Research topic being reviewed
+            inclusion_rules: Comma-separated criteria for including papers
+            exclusion_rules: Optional comma-separated criteria for excluding papers
+        """
+        args = {"topic": topic, "inclusion_rules": inclusion_rules}
         if exclusion_rules:
             args["exclusion_rules"] = exclusion_rules
         return await self.get_prompt("litreview_screening_criteria", args)
@@ -446,12 +482,18 @@ class MCPClient:
     
     async def get_synthesis_extract_claims(
         self,
-        paper_id: int,
+        paper_id: int | str,
         goal: Optional[str] = None,
         detail_level: Optional[str] = None,
     ) -> dict:
-        """Get claim extraction prompt."""
-        args = {"paper_id": paper_id}
+        """Get claim extraction prompt.
+
+        Args:
+            paper_id: ID of the paper to analyze (will be converted to string)
+            goal: What to extract - 'key findings', 'methodology', 'all claims'
+            detail_level: How detailed - 'brief', 'moderate', 'comprehensive'
+        """
+        args = {"paper_id": str(paper_id)}
         if goal:
             args["goal"] = goal
         if detail_level:

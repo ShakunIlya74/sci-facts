@@ -121,12 +121,12 @@ class TestPromptEndpoints:
             "inclusion_rules": "peer-reviewed, published after 2018",
             "exclusion_rules": "preprints, non-English",
         }
-        
+
         result_logger.log_request("prompts/get", {
             "name": "litreview_screening_criteria",
             "arguments": args,
         })
-        
+
         try:
             response = await mcp_client.get_litreview_screening_criteria(
                 topic=args["topic"],
