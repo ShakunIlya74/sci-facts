@@ -3,6 +3,7 @@ requests
 langchain
 langchain-openai
 langchain-core
+langgraph
 
 # MCP Client dependencies
 httpx>=0.25.0

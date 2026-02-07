@@ -2,12 +2,14 @@
 MCP Client for communicating with Scholar Inbox MCP Server.
 
 Provides async methods for calling tools, reading resources, and getting prompts.
+Also provides SSE-based task stream for receiving pending tasks from the server.
 """
 
+import asyncio
 import json
 import logging
-from typing import Any, Optional
-from urllib.parse import quote
+from typing import Any, AsyncGenerator, Callable, Optional
+from urllib.parse import quote, urljoin
 
 import httpx
 
@@ -111,22 +113,23 @@ class MCPClient:
         """Async context manager exit."""
         await self.close()
     
-    async def _request(self, method: str, params: Optional[dict] = None) -> dict:
+    async def _request(self, method: str, params: Optional[dict] = None, _retry: bool = True) -> dict:
         """
         Send JSON-RPC request to MCP server.
-        
+
         Args:
             method: JSON-RPC method name
             params: Method parameters
-        
+            _retry: Internal flag for retry on session expiry
+
         Returns:
             Result from server response
-        
+
         Raises:
             MCPError: If server returns an error
         """
         session = await self._get_session()
-        
+
         payload = {
             "jsonrpc": "2.0",
             "method": method,
@@ -134,14 +137,22 @@ class MCPClient:
         }
         if params is not None:
             payload["params"] = params
-        
+
         logger.debug(f"MCP request: {method} - {params}")
-        
+
         response = await session.post(
-            self.settings.mcp_server_url, 
+            self.settings.mcp_server_url,
             json=payload,
             headers=self.headers,
         )
+
+        # Handle 404 (session expired/invalid) by re-initializing
+        if response.status_code == 404 and _retry and method != "initialize":
+            logger.warning("MCP session invalid (404), re-initializing...")
+            self._mcp_session_id = None
+            await self.initialize()
+            return await self._request(method, params, _retry=False)
+
         response.raise_for_status()
 
         # Extract session ID from response headers (set during initialize)
@@ -218,18 +229,34 @@ class MCPClient:
     async def call_tool(self, name: str, arguments: Optional[dict] = None) -> dict:
         """
         Call an MCP tool.
-        
+
         Args:
             name: Tool name
             arguments: Tool arguments
-        
+
         Returns:
-            Tool result
+            Tool result (parsed from content)
         """
         params = {"name": name}
         if arguments is not None:
             params["arguments"] = arguments
-        return await self._request("tools/call", params)
+        result = await self._request("tools/call", params)
+
+        # MCP tool results are wrapped in content array
+        # Format: {"content": [{"type": "text", "text": "{...}"}]}
+        content = result.get("content", [])
+        if content and isinstance(content, list):
+            first_item = content[0]
+            if first_item.get("type") == "text":
+                text = first_item.get("text", "{}")
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse tool result as JSON: {text[:100]}")
+                    return {"text": text}
+
+        # Fallback: return as-is if not in expected format
+        return result
     
     # Paper Search Tools
     
@@ -499,3 +526,384 @@ class MCPClient:
         if detail_level:
             args["detail_level"] = detail_level
         return await self.get_prompt("synthesis_extract_claims", args)
+
+    # === Task Stream Methods ===
+
+    def _get_task_stream_url(self) -> str:
+        """Get the task stream SSE endpoint URL."""
+        # Replace /mcp with /mcp/tasks/stream
+        base_url = self.settings.mcp_server_url
+        if base_url.endswith('/mcp'):
+            return base_url.rsplit('/mcp', 1)[0] + '/mcp/tasks/stream'
+        else:
+            # Fallback: append /tasks/stream
+            return base_url.rstrip('/') + '/tasks/stream'
+
+    async def task_stream(
+        self,
+        poll_interval: float = 2.0,
+        task_types: Optional[list[str]] = None,
+        mark_processing: bool = True,
+    ) -> AsyncGenerator[dict, None]:
+        """
+        Connect to the task stream SSE endpoint and yield incoming tasks.
+
+        This method opens a persistent HTTP connection to the server's task stream
+        endpoint and yields task dictionaries as they arrive via Server-Sent Events.
+
+        Args:
+            poll_interval: Seconds between server-side polls (default: 2.0)
+            task_types: Optional list of task types to filter (e.g., ['synthesis'])
+            mark_processing: If True, server marks tasks as 'processing' when sent
+
+        Yields:
+            Task dictionaries with keys:
+                - task_id: Unique task identifier
+                - task_type: Type of task (e.g., 'synthesis', 'agent_chat')
+                - synthesis_id: Associated synthesis ID (if applicable)
+                - payload: Task-specific data
+                - status: Current status ('pending' or 'processing')
+                - created_at: ISO timestamp of creation
+
+        Example:
+            async for task in client.task_stream(task_types=['synthesis']):
+                print(f"Received task: {task['task_id']}")
+                # Process the task...
+                await client.complete_task(task['task_id'], result={'status': 'done'})
+        """
+        url = self._get_task_stream_url()
+
+        # Build query parameters
+        params = {'poll_interval': str(poll_interval)}
+        if task_types:
+            params['task_types'] = ','.join(task_types)
+        if not mark_processing:
+            params['mark_processing'] = 'false'
+
+        headers = {
+            "Authorization": f"Bearer {self.settings.mcp_api_key}",
+            "Accept": "text/event-stream",
+        }
+
+        logger.info(f"Connecting to task stream: {url}")
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream('GET', url, params=params, headers=headers) as response:
+                response.raise_for_status()
+
+                current_event = None
+                current_data = []
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+
+                    if not line:
+                        # Empty line marks end of event
+                        if current_event and current_data:
+                            data_str = '\n'.join(current_data)
+                            try:
+                                data = json.loads(data_str)
+                                if current_event == 'task':
+                                    logger.debug(f"Received task: {data.get('task_id')}")
+                                    yield data
+                                elif current_event == 'heartbeat':
+                                    logger.debug(f"Heartbeat: {data}")
+                                elif current_event == 'error':
+                                    logger.error(f"Task stream error: {data}")
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Failed to parse event data: {e}")
+
+                        current_event = None
+                        current_data = []
+                        continue
+
+                    if line.startswith('event:'):
+                        current_event = line[6:].strip()
+                    elif line.startswith('data:'):
+                        current_data.append(line[5:].strip())
+
+    async def listen_for_tasks(
+        self,
+        handler: Callable[[dict], Any],
+        poll_interval: float = 2.0,
+        task_types: Optional[list[str]] = None,
+        mark_processing: bool = True,
+        stop_on_error: bool = False,
+    ) -> None:
+        """
+        Listen for tasks and process them with the provided handler.
+
+        This is a convenience method that wraps task_stream() with error handling
+        and automatic reconnection.
+
+        Args:
+            handler: Async or sync callable that receives task dictionaries
+            poll_interval: Seconds between server-side polls
+            task_types: Optional list of task types to filter
+            mark_processing: If True, server marks tasks as 'processing'
+            stop_on_error: If True, stop listening on first handler error
+
+        Example:
+            async def process_task(task: dict):
+                print(f"Processing: {task['task_id']}")
+                # Do work...
+                return {'result': 'success'}
+
+            await client.listen_for_tasks(process_task, task_types=['synthesis'])
+        """
+        logger.info("Starting task listener...")
+
+        while True:
+            try:
+                async for task in self.task_stream(
+                    poll_interval=poll_interval,
+                    task_types=task_types,
+                    mark_processing=mark_processing,
+                ):
+                    try:
+                        # Call handler (support both sync and async)
+                        if asyncio.iscoroutinefunction(handler):
+                            await handler(task)
+                        else:
+                            handler(task)
+                    except Exception as e:
+                        logger.error(f"Task handler error for {task.get('task_id')}: {e}")
+                        if stop_on_error:
+                            raise
+
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error in task stream: {e}")
+                if e.response.status_code >= 400 and e.response.status_code < 500:
+                    # Client error - don't retry
+                    raise
+                # Server error - retry after delay
+                await asyncio.sleep(5.0)
+
+            except (httpx.ReadTimeout, httpx.ConnectError) as e:
+                logger.warning(f"Connection error in task stream: {e}")
+                # Reconnect after delay
+                await asyncio.sleep(5.0)
+
+            except asyncio.CancelledError:
+                logger.info("Task listener cancelled")
+                raise
+
+            except Exception as e:
+                logger.error(f"Unexpected error in task stream: {e}")
+                await asyncio.sleep(5.0)
+
+    async def update_task_status(
+        self,
+        task_id: str,
+        status: str,
+        error_message: Optional[str] = None,
+    ) -> dict:
+        """
+        Update a task's status via MCP tool call.
+
+        Note: This requires a corresponding tool on the server side.
+        For now, tasks are updated directly by the server based on synthesis completion.
+
+        Args:
+            task_id: The task ID to update
+            status: New status ('completed', 'failed', 'cancelled')
+            error_message: Optional error message for failed tasks
+
+        Returns:
+            Result from the server
+        """
+        args = {"task_id": task_id, "status": status}
+        if error_message:
+            args["error_message"] = error_message
+        return await self.call_tool("task_update_status", args)
+
+    async def complete_task(
+        self,
+        task_id: str,
+        result: Optional[dict] = None,
+    ) -> dict:
+        """
+        Mark a task as completed with optional result.
+
+        Note: This requires a corresponding tool on the server side.
+
+        Args:
+            task_id: The task ID to complete
+            result: Optional result data to store
+
+        Returns:
+            Result from the server
+        """
+        args = {"task_id": task_id, "status": "completed"}
+        if result:
+            args["result"] = result
+        return await self.call_tool("task_update_status", args)
+
+    # === Agent Session Methods ===
+
+    async def agent_session_create(
+        self,
+        user_id: int,
+        query: str,
+        task_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Create a new agent session for literature review.
+        
+        Args:
+            user_id: ID of the user initiating the session
+            query: The user's research query
+            task_id: Optional task ID (generated if not provided)
+            
+        Returns:
+            Result with session_id and status
+        """
+        args = {"user_id": user_id, "query": query}
+        if task_id:
+            args["task_id"] = task_id
+        return await self.call_tool("agent_session_create", args)
+
+    async def agent_session_add_papers(
+        self,
+        session_id: str,
+        paper_ids: list[int],
+        step: str,
+        selection_reason: Optional[str] = None,
+    ) -> dict:
+        """
+        Add papers to an agent session.
+        
+        Args:
+            session_id: The session identifier
+            paper_ids: List of paper IDs to add
+            step: Pipeline step that found these papers
+            selection_reason: Optional reason for selection
+            
+        Returns:
+            Result with papers_added and total_papers
+        """
+        args = {
+            "session_id": session_id,
+            "paper_ids": paper_ids,
+            "step": step,
+        }
+        if selection_reason:
+            args["selection_reason"] = selection_reason
+        return await self.call_tool("agent_session_add_papers", args)
+
+    async def agent_session_get_papers(
+        self,
+        session_id: str,
+        include_details: bool = False,
+    ) -> dict:
+        """
+        Get all papers collected in an agent session.
+        
+        Args:
+            session_id: The session identifier
+            include_details: If True, include full paper metadata
+            
+        Returns:
+            Result with papers list and total count
+        """
+        return await self.call_tool("agent_session_get_papers", {
+            "session_id": session_id,
+            "include_details": include_details,
+        })
+
+    async def agent_session_complete(
+        self,
+        session_id: str,
+        summary: Optional[str] = None,
+        final_paper_ids: Optional[list[int]] = None,
+    ) -> dict:
+        """
+        Mark an agent session as complete.
+        
+        Args:
+            session_id: The session identifier
+            summary: Optional summary of findings
+            final_paper_ids: Optional final curated paper list
+            
+        Returns:
+            Result with status and total_papers
+        """
+        args = {"session_id": session_id}
+        if summary:
+            args["summary"] = summary
+        if final_paper_ids:
+            args["final_paper_ids"] = final_paper_ids
+        return await self.call_tool("agent_session_complete", args)
+
+    async def agent_session_update_progress(
+        self,
+        session_id: str,
+        step: str,
+        step_data: Optional[dict] = None,
+    ) -> dict:
+        """
+        Update the progress of an agent session.
+        
+        Args:
+            session_id: The session identifier
+            step: Current pipeline step name
+            step_data: Optional data for the current step
+            
+        Returns:
+            Result with success status
+        """
+        args = {"session_id": session_id, "step": step}
+        if step_data:
+            args["step_data"] = step_data
+        return await self.call_tool("agent_session_update_progress", args)
+
+    # === Agent Prompt Methods ===
+
+    async def get_agent_keyword_extraction(self, user_query: str) -> dict:
+        """Get keyword extraction prompt for agent pipeline."""
+        return await self.get_prompt("agent_keyword_extraction", {
+            "user_query": user_query,
+        })
+
+    async def get_agent_query_augmentation(
+        self,
+        user_query: str,
+        keywords: list[str],
+        selected_papers: list[str],
+    ) -> dict:
+        """Get query augmentation prompt for agent pipeline."""
+        return await self.get_prompt("agent_query_augmentation", {
+            "user_query": user_query,
+            "keywords": ", ".join(keywords),
+            "selected_papers": "\n".join(f"- {p}" for p in selected_papers),
+        })
+
+    async def get_agent_paper_selection(
+        self,
+        user_query: str,
+        papers_json: str,
+        already_selected: Optional[list[str]] = None,
+    ) -> dict:
+        """Get paper selection prompt for agent pipeline."""
+        args = {
+            "user_query": user_query,
+            "papers_json": papers_json,
+        }
+        if already_selected:
+            args["already_selected"] = "\n".join(f"- {p}" for p in already_selected)
+        return await self.get_prompt("agent_paper_selection", args)
+
+    async def get_agent_custom_search_design(
+        self,
+        user_query: str,
+        collected_papers: list[str],
+        gaps_identified: Optional[str] = None,
+    ) -> dict:
+        """Get custom search design prompt for agent pipeline."""
+        args = {
+            "user_query": user_query,
+            "collected_papers": "\n".join(f"- {p}" for p in collected_papers),
+        }
+        if gaps_identified:
+            args["gaps_identified"] = gaps_identified
+        return await self.get_prompt("agent_custom_search_design", args)
