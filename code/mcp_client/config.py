@@ -31,7 +31,7 @@ class Settings:
     
     # vLLM Server settings
     vllm_host: str = "127.0.0.1"
-    vllm_port: int = 8001
+    vllm_port: int = 8000
     vllm_api_key: str = "token-abc123"
     vllm_model: str = "Qwen/Qwen3-VL-4B-Instruct"
     
@@ -51,6 +51,19 @@ class Settings:
     def vllm_base_url(self) -> str:
         """Get vLLM server base URL."""
         return f"http://{self.vllm_host}:{self.vllm_port}/v1"
+    
+    @property
+    def mcp_server_base_url(self) -> str:
+        """Get MCP server base URL (without /mcp path)."""
+        url = self.mcp_server_url
+        if url.endswith('/mcp'):
+            return url[:-4]
+        return url.rstrip('/')
+    
+    @property
+    def mcp_task_stream_url(self) -> str:
+        """Get the SSE task stream endpoint URL."""
+        return f"{self.mcp_server_base_url}/mcp/tasks/stream"
     
     @classmethod
     def from_env(cls) -> "Settings":

@@ -527,17 +527,56 @@ class MCPClient:
             args["detail_level"] = detail_level
         return await self.get_prompt("synthesis_extract_claims", args)
 
+    async def get_synthesis_build_prompt(
+        self,
+        goal: str,
+        tone: str,
+        papers_context: str,
+    ) -> str:
+        """Get the complete LLM-ready synthesis prompt from the MCP server.
+
+        Calls the `synthesis_build_prompt` MCP prompt, which is the single
+        source of truth for synthesis prompt construction.
+
+        Args:
+            goal: Synthesis goal (summary, fact_extraction, topic_extraction, keywords_extraction)
+            tone: Writing style (precise, fun_facts, eli5, brutal)
+            papers_context: Pre-formatted concatenated paper text from task payload
+
+        Returns:
+            Complete prompt text ready to send to the LLM
+
+        Raises:
+            MCPError: If the MCP server returns an error
+            ValueError: If the response contains no prompt text
+        """
+        result = await self.get_prompt("synthesis_build_prompt", {
+            "goal": goal,
+            "tone": tone,
+            "papers_context": papers_context,
+        })
+
+        # Extract prompt text from MCP prompt response
+        # Response format: {"messages": [{"role": "user", "content": {"type": "text", "text": "..."}}]}
+        messages = result.get("messages", [])
+        if messages:
+            content = messages[0].get("content", {})
+            if isinstance(content, dict):
+                text = content.get("text", "")
+            elif isinstance(content, str):
+                text = content
+            else:
+                text = ""
+            if text:
+                return text
+
+        raise ValueError("No prompt text returned from synthesis_build_prompt MCP prompt")
+
     # === Task Stream Methods ===
 
     def _get_task_stream_url(self) -> str:
         """Get the task stream SSE endpoint URL."""
-        # Replace /mcp with /mcp/tasks/stream
-        base_url = self.settings.mcp_server_url
-        if base_url.endswith('/mcp'):
-            return base_url.rsplit('/mcp', 1)[0] + '/mcp/tasks/stream'
-        else:
-            # Fallback: append /tasks/stream
-            return base_url.rstrip('/') + '/tasks/stream'
+        return self.settings.mcp_task_stream_url
 
     async def task_stream(
         self,

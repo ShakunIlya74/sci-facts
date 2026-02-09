@@ -2,7 +2,17 @@
 Synthesis Pipeline.
 
 Direct LLM processing for paper synthesis tasks.
-Retrieves prompt from MCP server, concatenates paper context, and generates synthesis.
+
+Two modes of operation:
+
+1. MCP-NATIVE (Task Queue): The task_listener receives pre-formatted papers_context
+   from the MCP server, retrieves the prompt via `synthesis_build_prompt` MCP prompt,
+   and sends it directly to the LLM. This does NOT use SynthesisPipeline at all.
+
+2. AGENT-INITIATED: When the agent pipeline wants to perform synthesis on papers
+   it collected itself, it can use SynthesisPipeline.process_with_prompt() to
+   pass a pre-built prompt to the LLM, or use the legacy process() method
+   with locally-built prompts.
 
 Supports synthesis goals:
 - summary: Comprehensive synthesis of findings
@@ -393,6 +403,72 @@ Provide your {goal.replace('_', ' ')} synthesis following the guidelines above."
                 success=False,
                 error=str(e),
                 paper_count=len(papers),
+                goal=goal,
+                tone=tone,
+            )
+
+    async def process_with_prompt(
+        self,
+        prompt_text: str,
+        goal: str = "",
+        tone: str = "",
+        paper_count: int = 0,
+    ) -> SynthesisResult:
+        """
+        Process synthesis using a pre-built prompt from the MCP server.
+
+        This is used by the agent workflow when the prompt has already been
+        retrieved via the `synthesis_build_prompt` MCP prompt.
+
+        Args:
+            prompt_text: Complete LLM-ready prompt from MCP server
+            goal: Synthesis goal (for metadata only)
+            tone: Synthesis tone (for metadata only)
+            paper_count: Number of papers (for metadata only)
+
+        Returns:
+            SynthesisResult with generated content or error
+        """
+        logger.info(f"Processing synthesis with pre-built prompt: goal={goal}, tone={tone}")
+
+        if not prompt_text:
+            return SynthesisResult(
+                success=False,
+                error="Empty prompt text provided",
+                goal=goal,
+                tone=tone,
+            )
+
+        try:
+            response = await self.llm.ainvoke([HumanMessage(content=prompt_text)])
+            content = response.content
+
+            if not content:
+                return SynthesisResult(
+                    success=False,
+                    error="LLM returned empty response",
+                    paper_count=paper_count,
+                    goal=goal,
+                    tone=tone,
+                )
+
+            logger.info(f"Synthesis completed (pre-built prompt): {len(content)} characters")
+            logger.debug(f"Synthesis content preview: {content[:500]}...")
+
+            return SynthesisResult(
+                success=True,
+                content=content,
+                paper_count=paper_count,
+                goal=goal,
+                tone=tone,
+            )
+
+        except Exception as e:
+            logger.error(f"Synthesis failed (pre-built prompt): {e}")
+            return SynthesisResult(
+                success=False,
+                error=str(e),
+                paper_count=paper_count,
                 goal=goal,
                 tone=tone,
             )
