@@ -55,10 +55,10 @@ class Settings:
     @property
     def mcp_server_base_url(self) -> str:
         """Get MCP server base URL (without /mcp path)."""
-        url = self.mcp_server_url
+        url = self.mcp_server_url.rstrip('/')
         if url.endswith('/mcp'):
             return url[:-4]
-        return url.rstrip('/')
+        return url
     
     @property
     def mcp_task_stream_url(self) -> str:

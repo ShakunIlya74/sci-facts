@@ -95,6 +95,7 @@ class MCPClient:
         if self._session is None or self._session.is_closed:
             self._session = httpx.AsyncClient(
                 timeout=self.settings.http_timeout,
+                follow_redirects=True,
             )
         return self._session
     
@@ -626,7 +627,7 @@ class MCPClient:
 
         logger.info(f"Connecting to task stream: {url}")
 
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
             async with client.stream('GET', url, params=params, headers=headers) as response:
                 response.raise_for_status()
 
