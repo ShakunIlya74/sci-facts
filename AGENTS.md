@@ -9,7 +9,7 @@
   - `POST /mcp` — JSON-RPC 2.0 (tools, prompts, resources)
   - `GET /mcp/tasks/stream` — SSE task stream
 - **Note**: The MCP server lives in a separate repository (`scholar_inbox`), not in this repo.
-- **Routing**: The server uses Starlette `Mount("/mcp", ...)` which strips the `/mcp` prefix before routing to the inner ASGI app. The FastMCP `streamable_http_path` must be set to `"/"` (not the default `"/mcp"`) to avoid double-nesting. The task stream wrapper must also use prefix-stripped paths (e.g., `"/tasks/stream"` not `"/mcp/tasks/stream"`).
+- **Routing**: The server uses `mcp.streamable_http_app()` (Starlette with `Route("/mcp")`) as its base, wrapped in a thin ASGI layer for custom routes. Do NOT use Starlette `Mount` — it strips path prefixes and doesn't propagate lifespan events.
 
 ### This Repo (sci-facts)
 - **MCP Client**: `code/mcp_client/` — async client for communicating with the MCP server
