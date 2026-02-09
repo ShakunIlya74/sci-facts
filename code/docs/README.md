@@ -8,3 +8,16 @@ This directory contains documentation for the MCP Client project.
 - [API Reference](api_reference.md) - MCP Client API documentation
 - [Testing Guide](testing_guide.md) - How to run and write tests
 - [Configuration](configuration.md) - Configuration options and environment variables
+
+
+
+
+# Start the complete pipeline
+./start_pipeline.sh
+
+# Or start components separately (prefered)
+# Terminal 1: Start vLLM server
+python -m llm_utils.start_server
+
+# Terminal 2: Start task listener
+python -m main_pipeline.task_listener --task-types synthesis,agent_chat
